@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Number Prediction</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f6f9;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            display: inline-block;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+            width: 80%;
+            max-width: 900px;
+        }
+
+        input,
+        button,
+        select {
+            padding: 8px 12px;
+            margin: 8px;
+            font-size: 16px;
+        }
+
+        #result {
+            margin-top: 20px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        table {
+            margin: 20px auto;
+            border-collapse: collapse;
+            width: 90%;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 8px 12px;
+            text-align: center;
+        }
+
+        th {
+            background: #007bff;
+            color: white;
+        }
+
+        canvas {
+            margin-top: 20px;
+            max-width: 600px;
+        }
+
+        #patternSelector {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h2>📅 Number Prediction</h2>
+        <p>Select a date and see the prediction</p>
+
+        <input type="date" id="datePicker">
+        <button onclick="getPrediction()">Predict</button>
+
+        <div id="result"></div>
+
+        <!-- Patterns Table -->
+        <div id="patternsTable"></div>
+
+        <!-- Chart -->
+        <canvas id="patternsChart"></canvas>
+
+        <!-- Dropdown for manual selection -->
+        <div id="patternSelector" style="display:none;">
+            <h3>🎯 Check Probability for a Pattern</h3>
+            <select id="patternDropdown" onchange="showPatternProbability()"></select>
+            <p id="patternProbability"></p>
+        </div>
+
+        <!-- Number Probability Check -->
+        <div style="margin-top: 40px;">
+            <h3>🔢 Check Single Number Probability</h3>
+            <form method="get" action="">
+                <label for="number_select">Choose a number:</label>
+                <select name="number" id="number_select">
+                    {% for n in numbers %}
+                    <option value="{{ n }}" {% if n == selected_number %}selected{% endif %}>
+                        {{ n }}
+                    </option>
+                    {% endfor %}
+                </select>
+                <button type="submit">Check Probability</button>
+            </form>
+
+            {% if selected_number is not None %}
+            <div style="margin-top: 20px;">
+                <p><b>Number {{ selected_number }} Probability:</b></p>
+                {% if probability is not None %}
+                <p>Appears in <b>{{ probability }}%</b> of all entries.</p>
+                {% else %}
+                <p>No data available.</p>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+
+    </div>
+
+    <script>
+        let patternsData = [];
+
+        async function getPrediction() {
+            const date = document.getElementById("datePicker").value;
+            if (!date) {
+                alert("Please select a date!");
+                return;
+            }
+
+            const response = await fetch(`/api/predict?date=${date}`);
+            if (!response.ok) {
+                document.getElementById("result").innerHTML = "❌ Error fetching prediction";
+                return;
+            }
+
+            const data = await response.json();
+            patternsData = data.patterns || []; // store globally
+
+            // Format predicted numbers
+            const predictionText = data.prediction.length > 0
+                ? data.prediction.map(p => p.filter(x => x !== null && x !== undefined).join("-")).join(", ")
+                : "No prediction";
+
+            document.getElementById("result").innerHTML = `
+                <p>📅 <b>Date:</b> ${data.date}</p>
+                <p>🗓 <b>Weekday:</b> ${data.weekday}</p>
+                <p>🔮 <b>Predicted Numbers:</b> ${predictionText}</p>
+                <p>📊 <b>Samples:</b> ${data.samples}</p>
+            `;
+
+            // --- Top 5 Patterns Table ---
+            if (patternsData.length > 0) {
+                let tableHTML = `
+                    <h3>📊 Top Patterns</h3>
+                    <table>
+                        <tr>
+                            <th>Pattern</th>
+                            <th>Count</th>
+                            <th>Probability</th>
+                        </tr>
+                `;
+                patternsData.forEach(p => {
+                    tableHTML += `
+                        <tr>
+                            <td>${p.label || p.numbers.join("-")}</td>
+                            <td>${p.count}</td>
+                            <td>${(p.probability * 100).toFixed(1)}%</td>
+                        </tr>
+                    `;
+                });
+                tableHTML += `</table>`;
+                document.getElementById("patternsTable").innerHTML = tableHTML;
+            } else {
+                document.getElementById("patternsTable").innerHTML = "";
+            }
+
+            // --- Dropdown for manual selection ---
+            if (patternsData.length > 0) {
+                const dropdown = document.getElementById("patternDropdown");
+                dropdown.innerHTML = "";
+                patternsData.forEach(p => {
+                    const option = document.createElement("option");
+                    option.value = p.label || p.numbers.join("-");
+                    option.textContent = p.label || p.numbers.join("-");
+                    dropdown.appendChild(option);
+                });
+                document.getElementById("patternSelector").style.display = "block";
+                showPatternProbability(); // show first by default
+            }
+
+            // --- Chart ---
+            if (window.patternsChartInstance) {
+                window.patternsChartInstance.destroy(); // reset chart if exists
+            }
+
+            if (patternsData.length > 0) {
+                const ctx = document.getElementById("patternsChart").getContext("2d");
+                window.patternsChartInstance = new Chart(ctx, {
+                    type: "bar",
+                    data: {
+                        labels: patternsData.map(p => p.label || p.numbers.join("-")),
+                        datasets: [{
+                            label: "Probability (%)",
+                            data: patternsData.map(p => (p.probability * 100).toFixed(1)),
+                            backgroundColor: "rgba(54, 162, 235, 0.6)",
+                            borderColor: "rgba(54, 162, 235, 1)",
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: { display: false }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                max: 100,
+                                ticks: {
+                                    callback: val => val + "%"
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        function showPatternProbability() {
+            const selectedPattern = document.getElementById("patternDropdown").value;
+            const pattern = patternsData.find(p => (p.label || p.numbers.join("-")) === selectedPattern);
+
+            if (pattern) {
+                document.getElementById("patternProbability").innerHTML =
+                    `📈 Probability for <b>${selectedPattern}</b>: <b>${(pattern.probability * 100).toFixed(1)}%</b> (Count: ${pattern.count})`;
+            }
+        }
+    </script>
+</body>
+</html>
